@@ -102,7 +102,8 @@ def cmd_chat(_args) -> int:
 
     cmd = [
         "openclaw", "--profile", PROFILE,
-        "chat", "--local",
+        # 复用 Easel 常驻 Gateway；当前 OpenClaw 禁止同 profile 同时运行 Gateway 与 --local。
+        "chat",
         "--session", session_key,
         # chat 里可能直接发起制作层/跨层编排，给足制作层预算，避免长任务被 turn 超时掐断（O2）。
         # 超时统一走 easel/timeouts.py（三入口单一真相源），毫秒 = TIMEOUT_CHAT * 1000。
@@ -116,6 +117,7 @@ def cmd_chat(_args) -> int:
     if prefix:
         cmd += ["--message", prefix]
 
+    print(f"  {DIM}运行模式: OpenClaw Gateway（profile: {PROFILE}）{NC}")
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=_proxy_env())
 
     return result.returncode

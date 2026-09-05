@@ -53,6 +53,8 @@ MODEL_GROUPS: dict[str, dict[str, Any]] = {
                          aliases=("DASHSCOPE_KEY", "ALIYUN_API_KEY")),
                     _key("DASHSCOPE_VIDEO_MODEL", "视频模型", required=False, secret=False,
                          aliases=("DASHSCOPE_MODEL",)),
+                    _key("DASHSCOPE_VIDEO_EDIT_MODEL", "视频编辑模型", required=False,
+                         secret=False),
                     _key("DASHSCOPE_BASE_URL", "根地址", required=False, secret=False),
                 ],
             },

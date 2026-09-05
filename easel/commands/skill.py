@@ -94,11 +94,14 @@ def _run_via_openclaw(message: str, timeout: int = 300) -> int:
 
     cmd = [
         "openclaw", "--profile", OPENCLAW_PROFILE,
-        "agent", "--local", "--agent", "main",
+        # Gateway 已常驻时不能使用 --local，否则同一 state directory 会发生占用冲突。
+        "agent", "--agent", "main",
         "--session-key", f"agent:main:{session_key}",
         "--timeout", str(timeout),
         "--message", message,
     ]
+    print(f"[easel] SKILL 经 Gateway 启动: session={session_key}, timeout={timeout}s",
+          file=sys.stderr)
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True,

@@ -14,6 +14,7 @@ dependencies = [
     "sse-starlette",  # 对话流式 SSE
     "pydantic",       # 请求模型
     "segno",          # B站扫码登录二维码渲染（纯 Python）
+    "python-multipart", # FastAPI 上传与表单接口的运行时依赖
 ]
 
 # 媒体 / 发布类 SKILL 才需要，默认不装以保持核心安装轻量：

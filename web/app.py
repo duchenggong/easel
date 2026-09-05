@@ -382,6 +382,10 @@ def _write_env(updates: dict[str, str]) -> None:
             if k in updates:
                 matched = k
         if matched is not None:
+            # 同一个键可能因手工编辑和 Web 追加而重复；只保留第一处更新结果，
+            # 避免不同读取器分别采用 first-win / last-win 时得到相反配置。
+            if matched in seen:
+                continue
             seen.add(matched)
             val = updates[matched]
             if val.strip() == '':
@@ -431,10 +435,13 @@ def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | No
     sk = session_id or f'web-{int(time.time() * 1000)}'
     _heal_openclaw_session(sk)   # 清洗历史里无签名 thinking 块，防回放失效
     # 钉死 --session-id 让 OpenClaw 每轮续同一 transcript（防跨天空闲后新起空会话丢历史，见 _openclaw_session_id）
-    cmd = ['openclaw', '--profile', OPENCLAW_PROFILE, 'agent', '--local', '--agent', 'main',
+    # Gateway 已常驻时不能使用 --local，否则 OpenClaw 会因同一 state directory 被占用而退出 1。
+    cmd = ['openclaw', '--profile', OPENCLAW_PROFILE, 'agent', '--agent', 'main',
            '--session-key', f'agent:main:{sk}', '--session-id', _openclaw_session_id(sk),
            '--thinking', THINKING_LEVEL,
            '--timeout', str(timeout), '--message', msg]
+    print(f'[easel-web] 同步 Agent 请求经 Gateway 启动: session={sk}, timeout={timeout}s',
+          file=sys.stderr, flush=True)
     # 跨进程锁：同一会话同时刻只跑一个 openclaw，防并发 takeover 崩溃（rc=1）
     xlock = _CrossProcLock(sk)
     if not xlock.acquire(timeout=min(timeout, 300)):
@@ -1059,12 +1066,15 @@ async def api_chat_stream(req: ChatRequest):
         os.close(fd)
         raw_path = Path(raw_path)
 
+        # 与同步入口保持一致，复用常驻 Gateway；--local 会和同 profile 的 Gateway 冲突。
         cmd = [
-            "openclaw", "--profile", OPENCLAW_PROFILE, "agent", "--local", "--agent", "main",
+            "openclaw", "--profile", OPENCLAW_PROFILE, "agent", "--agent", "main",
             "--session-key", f"agent:main:{sk}", "--session-id", _openclaw_session_id(sk),
             "--thinking", THINKING_LEVEL,
             "--timeout", str(TIMEOUT_CHAT), "--message", message,
         ]
+        print(f'[easel-web] 流式 Agent 请求经 Gateway 启动: session={sk}, '
+              f'turn={turn_id}, timeout={TIMEOUT_CHAT}s', file=sys.stderr, flush=True)
         env = _proxy_env()
         env["OPENCLAW_RAW_STREAM"] = "1"
         env["OPENCLAW_RAW_STREAM_PATH"] = str(raw_path)

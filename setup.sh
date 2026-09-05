@@ -222,8 +222,13 @@ fi
 $OC config set agents.defaults.model.primary "${CLAUDE_MODEL:-$DEFAULT_PRIMARY_MODEL}" 2>&1 | tail -1
 # 整个 agent run 的总时长上限。制作层任务（OpenClaw 自执行短剧/长稿/多镜）很久 → 给足。
 $OC config set agents.defaults.timeoutSeconds 7200 2>&1 | tail -1
-# Easel 使用 profiles/<当前画像>/memory.md；关闭 OpenClaw 全局记忆索引，避免旧索引跨画像召回。
-$OC config set agents.defaults.memorySearch.enabled false --strict-json 2>&1 | tail -1
+# Easel 使用 profiles/<当前画像>/memory.md；旧版 OpenClaw 可关闭全局记忆索引。
+# 新版已移除该配置项，因此兼容性失败只记录警告，不中断其余安装步骤。
+if ! MEMORY_CONFIG_OUTPUT=$($OC config set agents.defaults.memorySearch.enabled false --strict-json 2>&1); then
+    warn "当前 OpenClaw 不支持 agents.defaults.memorySearch，已跳过"
+else
+    echo "$MEMORY_CONFIG_OUTPUT" | tail -1
+fi
 # 单次 LLM 请求的「空闲超时」（等模型开始/继续产出 token 的最长时间）。内部网关对大上下文/带思考的
 # 请求首 token 可能较慢，不设会用默认较短值 → 报「model did not produce a response before the model
 # idle timeout」而中断整个 run。与 agents.defaults.timeoutSeconds 是两回事，provider 超时不能延长整个 run。

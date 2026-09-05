@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import asyncio
+import argparse
 import io
 import json
 from pathlib import Path
@@ -16,6 +17,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "web"))
+sys.path.insert(0, str(PROJECT_ROOT / "skills" / "shared" / "scripts"))
 sys.path.insert(0, str(PROJECT_ROOT / "skills" / "openclaw" / "paper-explainer" / "scripts"))
 
 from easel.commands import skill as cli_skill  # noqa: E402
@@ -23,6 +25,9 @@ from easel import persona  # noqa: E402
 import app as web  # noqa: E402
 import paper_ingest  # noqa: E402
 import render_slides  # noqa: E402
+import ai_music  # noqa: E402
+import ai_video  # noqa: E402
+import voice_clone  # noqa: E402
 from model_registry import (configured_providers, env_aliases, provider_ids,
                             provider_required_env)  # noqa: E402
 from persona_gate import classify as classify_persona_score  # noqa: E402
@@ -43,8 +48,78 @@ def test_media_registry_separates_dashscope_model_names():
     video_fields = dict(provider_required_env("video")["dashscope"])
     music_fields = dict(provider_required_env("music")["dashscope"])
     assert "DASHSCOPE_VIDEO_MODEL" in video_fields
+    assert "DASHSCOPE_VIDEO_EDIT_MODEL" in video_fields
     assert "DASHSCOPE_MUSIC_MODEL" in music_fields
     assert env_aliases("video")["DASHSCOPE_VIDEO_MODEL"] == ("DASHSCOPE_MODEL",)
+
+
+def test_fun_music_v1_uses_current_sync_endpoint(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(ai_music, "require_env", lambda _name: "secret")
+    monkeypatch.setattr(ai_music, "env_lookup", lambda _name: "fun-music-v1")
+
+    def fake_post(url, headers, payload, timeout=60):
+        captured.update(url=url, headers=headers, payload=payload, timeout=timeout)
+        return {"output": {"audio": {"url": "https://example.invalid/music.mp3"}}}
+
+    monkeypatch.setattr(ai_music, "http_post", fake_post)
+    monkeypatch.setattr(ai_music, "download_audio", lambda _url, output: output)
+    args = argparse.Namespace(model=None, prompt="科技感音乐", lyrics=None,
+                              instrumental=True, timeout=30,
+                              output=str(tmp_path / "music.mp3"))
+
+    result = ai_music.generate_dashscope(args)
+
+    assert captured["url"].endswith("/services/audio/music/generation")
+    assert captured["payload"]["input"]["is_instrumental"] is True
+    assert result.name == "music.mp3"
+
+
+def test_qwen_audio_tts_uses_speech_synthesizer(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(voice_clone, "require_env", lambda _name: "secret")
+
+    def fake_json(url, headers, payload, timeout=120):
+        captured.update(url=url, headers=headers, payload=payload)
+        return {"output": {"audio": {"url": "https://example.invalid/voice.wav"}}}
+
+    monkeypatch.setattr(voice_clone, "http_json", fake_json)
+    monkeypatch.setattr(voice_clone, "download", lambda _url, output: output)
+    args = argparse.Namespace(model="qwen-audio-3.0-tts-flash", voice_id=None,
+                              text="你好", emotion=None)
+
+    result = voice_clone.clone_dashscope(args, tmp_path / "voice.wav")
+
+    assert captured["url"].endswith("/services/audio/tts/SpeechSynthesizer")
+    assert captured["payload"]["input"]["voice"] == "longanhuan_v3.6"
+    assert result.name == "voice.wav"
+
+
+def test_happyhorse_video_edit_uses_separate_model(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(ai_video, "require_env", lambda _name: "secret")
+
+    def fake_request(url, headers, method="GET", payload=None, **_kwargs):
+        captured.update(url=url, headers=headers, method=method, payload=payload)
+        return {"output": {"task_id": "task-1"}}
+
+    monkeypatch.setattr(ai_video, "http_request", fake_request)
+    monkeypatch.setattr(ai_video, "_poll",
+                        lambda *_args, **_kwargs: {"output": {"video_url": "https://example.invalid/out.mp4"}})
+    monkeypatch.setattr(ai_video, "download_video", lambda _url, output: output)
+    args = argparse.Namespace(
+        model="happyhorse-1.0-video-edit",
+        video="https://example.invalid/in.mp4",
+        reference_image=[], prompt="改成电影色调", resolution="720P",
+        poll_interval=1, timeout=10, output=str(tmp_path / "out.mp4"),
+    )
+
+    result = ai_video.edit_dashscope(args)
+
+    assert captured["url"].endswith("/services/aigc/video-generation/video-synthesis")
+    assert captured["payload"]["input"]["media"][0]["type"] == "video"
+    assert captured["payload"]["model"] == "happyhorse-1.0-video-edit"
+    assert result.name == "out.mp4"
 
 
 def test_configured_media_providers_lists_choices_without_keys():

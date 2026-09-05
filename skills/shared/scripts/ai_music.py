@@ -257,6 +257,26 @@ def generate_dashscope(args: argparse.Namespace) -> Path:
                 or DEFAULT_DASHSCOPE_BASE).rstrip("/")
     model = args.model or env_lookup("DASHSCOPE_MUSIC_MODEL") or DEFAULT_DASHSCOPE_MODEL
 
+    # Fun-Music v1 使用新版同步端点，响应直接包含 output.audio.url。
+    # 它与旧 text2audio 异步任务协议不是同一个接口，不能共用下面的轮询逻辑。
+    if model.startswith("fun-music-"):
+        endpoint = f"{base_url}/services/audio/music/generation"
+        # fun-music-v1 的 prompt 与 lyrics 二选一；有明确歌词时不再发送 prompt。
+        input_block: dict[str, Any] = (
+            {"lyrics": args.lyrics} if args.lyrics else {"prompt": args.prompt}
+        )
+        if args.instrumental:
+            input_block["is_instrumental"] = True
+        payload = {"model": model, "input": input_block}
+        headers = {"Authorization": f"Bearer {api_key}"}
+        print(f"[dashscope] 提交 Fun-Music 请求到 {endpoint}（model={model}）...",
+              file=sys.stderr)
+        result = http_post(endpoint, headers, payload, timeout=args.timeout)
+        audio_url = _find_audio_url(result)
+        if not audio_url:
+            fail(f"生成完成但未找到音频 URL：{json.dumps(result)[:300]}")
+        return download_audio(audio_url, Path(args.output))
+
     endpoint = f"{base_url}/services/aigc/text2audio/generation"
     input_block: dict[str, Any] = {"prompt": args.prompt}
     if args.lyrics:

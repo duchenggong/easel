@@ -343,6 +343,36 @@ def clone_dashscope(a, out: Path) -> Path:
     base = (os.environ.get("DASHSCOPE_BASE_URL", "").strip()
             or "https://dashscope.aliyuncs.com").rstrip("/")
     model = a.model or os.environ.get("DASHSCOPE_TTS_MODEL", "").strip() or "cosyvoice-v2"
+
+    # Qwen-Audio-TTS 与 CosyVoice v3 使用 SpeechSynthesizer HTTP 端点，
+    # 并支持系统音色；没有自定义 voice-id 时使用稳定的中文系统音色。
+    if model.startswith("qwen-audio-") or model.startswith("cosyvoice-v3"):
+        voice_id = a.voice_id or (
+            "longanhuan_v3.6" if model.startswith("qwen-audio-") else "longanyang"
+        )
+        endpoint = f"{base}/services/audio/tts/SpeechSynthesizer"
+        payload = {
+            "model": model,
+            "input": {
+                "text": a.text,
+                "voice": voice_id,
+                "format": out.suffix.lstrip(".") or "mp3",
+                "sample_rate": 24000,
+            },
+        }
+        print(f"[dashscope] 调用 SpeechSynthesizer（model={model}, voice={voice_id}）...",
+              file=sys.stderr)
+        response = http_json(
+            endpoint,
+            {"Authorization": f"Bearer {key}"},
+            payload,
+        )
+        url = _find_url(response)
+        if url:
+            return download(url, out)
+        fail(f"合成未返回音频 URL：{json.dumps(response, ensure_ascii=False)[:300]}")
+        return out
+
     if not a.voice_id:
         fail("dashscope 合成需 --voice-id（先 enroll 声音复刻）。")
     inp: dict[str, Any] = {"text": a.text, "voice": a.voice_id}

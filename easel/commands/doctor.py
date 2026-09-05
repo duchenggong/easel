@@ -67,9 +67,11 @@ def _skills_synced() -> bool:
 def _env_key_valid() -> bool:
     """Check .env 配置了可用的认证。
 
-    两条通道任一满足即可：
+    以下主模型认证通道任一满足即可：
     - 标准 API key：ANTHROPIC_API_KEY
     - Anthropic-compatible 服务：EASEL_LLM_API_KEY + EASEL_LLM_BASE_URL
+    - 公司 OpenAI-compatible 网关：COMPANY_AI_API_KEY + BASE_URL + MODEL
+    - DashScope OpenAI-compatible：DASHSCOPE_API_KEY + LLM_BASE_URL + LLM_MODEL
 
     ping 才是权威连通性测试；这里只做静态配置存在性检查。
     """
@@ -86,20 +88,44 @@ def _env_key_valid() -> bool:
                 continue
             key, value = line.split("=", 1)
             key, value = key.strip(), value.strip().strip('"').strip("'")
-            if key in ("ANTHROPIC_API_KEY", "EASEL_LLM_API_KEY", "EASEL_LLM_BASE_URL"):
+            if key in (
+                "ANTHROPIC_API_KEY",
+                "EASEL_LLM_API_KEY",
+                "EASEL_LLM_BASE_URL",
+                "COMPANY_AI_API_KEY",
+                "COMPANY_AI_BASE_URL",
+                "COMPANY_AI_MODEL",
+                "DASHSCOPE_API_KEY",
+                "DASHSCOPE_LLM_BASE_URL",
+                "DASHSCOPE_LLM_MODEL",
+            ):
                 auth_vars[key] = value
     except OSError:
         return False
 
     def _set(name: str) -> bool:
         v = auth_vars.get(name, "")
-        return bool(v) and "REPLACE_ME" not in v
+        # 中文说明文本也属于占位值，不能因为字符串非空就误判为已配置。
+        placeholder = re.search(
+            r"REPLACE|PLACEHOLDER|填写|省略|YOUR(?:_|-)?API(?:_|-)?KEY|XXX|^\.\.\.$",
+            v,
+            re.IGNORECASE,
+        )
+        return bool(v) and placeholder is None
 
     # 标准 key 通道
     if _set("ANTHROPIC_API_KEY"):
         return True
     # Anthropic-compatible 服务：key + base_url 同时配好
     if _set("EASEL_LLM_API_KEY") and _set("EASEL_LLM_BASE_URL"):
+        return True
+    # 公司 OpenAI-compatible 网关：连接、认证和模型必须同时存在。
+    if (_set("COMPANY_AI_API_KEY") and _set("COMPANY_AI_BASE_URL")
+            and _set("COMPANY_AI_MODEL")):
+        return True
+    # DashScope 作为主文本模型时，需要 OpenAI-compatible 地址、Key 和模型名。
+    if (_set("DASHSCOPE_API_KEY") and _set("DASHSCOPE_LLM_BASE_URL")
+            and _set("DASHSCOPE_LLM_MODEL")):
         return True
     return False
 
@@ -123,7 +149,7 @@ def cmd_doctor(_args) -> int:
     # 3. .env file with valid key
     env_ok = _env_key_valid()
     all_ok &= _check(".env (API Key)", env_ok,
-                      "填 ANTHROPIC_API_KEY，或 EASEL_LLM_API_KEY + EASEL_LLM_BASE_URL")
+                      "配置 Anthropic、公司 AI 网关或 DashScope 主文本模型认证")
 
     # 4. OpenClaw gateway running
     gw_ok = _gateway_healthy()

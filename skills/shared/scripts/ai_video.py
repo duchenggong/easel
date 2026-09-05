@@ -50,6 +50,7 @@ UA = "Easel-ai-video/0.1"
 
 DEFAULT_DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/api/v1"
 DEFAULT_DASHSCOPE_MODEL = "wan2.1-t2v-turbo"
+DEFAULT_DASHSCOPE_VIDEO_EDIT_MODEL = "happyhorse-1.0-video-edit"
 DEFAULT_ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_ARK_MODEL = "doubao-seedance-1-0-lite-t2v"
 DEFAULT_KLING_BASE = "https://api.klingai.com"
@@ -442,6 +443,46 @@ def generate_dashscope(args: argparse.Namespace, image: str | None) -> Path:
     return download_video(url, Path(args.output))
 
 
+def edit_dashscope(args: argparse.Namespace) -> Path:
+    """通过 DashScope HappyHorse 编辑一段公网可访问的视频。"""
+    api_key = require_env("DASHSCOPE_API_KEY")
+    base = (os.environ.get("DASHSCOPE_BASE_URL", "").strip()
+            or DEFAULT_DASHSCOPE_BASE).rstrip("/")
+    model = (args.model or os.environ.get("DASHSCOPE_VIDEO_EDIT_MODEL", "").strip()
+             or DEFAULT_DASHSCOPE_VIDEO_EDIT_MODEL)
+
+    # HappyHorse 要求输入视频为公网 HTTP(S) 或 DashScope 临时 OSS URL。
+    if not args.video.startswith(("http://", "https://", "oss://")):
+        fail("DashScope 视频编辑的 --video 必须是公网 URL 或 oss:// 临时 URL；"
+             "本地视频需先上传后再调用。")
+
+    if len(args.reference_image or []) > 5:
+        fail("HappyHorse 视频编辑最多支持 5 张参考图。")
+    media: list[dict[str, str]] = [{"type": "video", "url": args.video}]
+    for reference in args.reference_image or []:
+        media.append({"type": "reference_image", "url": _image_to_data_or_url(reference)})
+
+    payload = {
+        "model": model,
+        "input": {"prompt": args.prompt, "media": media},
+        "parameters": {"resolution": args.resolution},
+    }
+    endpoint = f"{base}/services/aigc/video-generation/video-synthesis"
+    headers = {"Authorization": f"Bearer {api_key}", "X-DashScope-Async": "enable"}
+    print(f"[dashscope] 提交视频编辑任务 {endpoint}（model={model}）...", file=sys.stderr)
+    result = http_request(endpoint, headers, method="POST", payload=payload)
+    task_id = (result.get("output") or {}).get("task_id")
+    if not task_id:
+        fail(f"提交失败：{result.get('message', json.dumps(result)[:300])}")
+    print(f"[dashscope] 视频编辑任务已提交：{task_id}", file=sys.stderr)
+    task = _poll(f"{base}/tasks/{task_id}", {"Authorization": f"Bearer {api_key}"},
+                 args.poll_interval, args.timeout)
+    url = _find_video_url(task)
+    if not url:
+        fail(f"任务完成但未找到视频 URL：{json.dumps(task)[:300]}")
+    return download_video(url, Path(args.output))
+
+
 # ── provider: ark（火山 Seedance）──────────────────────────
 def generate_ark(args: argparse.Namespace, image: str | None) -> Path:
     api_key = require_env("ARK_API_KEY")
@@ -791,6 +832,17 @@ def cmd_image2video(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_videoedit(args: argparse.Namespace) -> int:
+    """执行 DashScope 视频编辑，与文生/图生视频模型配置相互独立。"""
+    provider = resolve_provider(args.provider)
+    if provider != "dashscope":
+        fail("videoedit 当前仅支持 provider=dashscope。")
+    out = edit_dashscope(args)
+    print("编辑完成：")
+    print(out)
+    return 0
+
+
 def _add_common(p: argparse.ArgumentParser, need_prompt: bool) -> None:
     p.add_argument("--provider", help=f"provider（{ '/'.join(PROVIDERS) }），也可用 env VIDEO_PROVIDER")
     p.add_argument("--prompt", required=need_prompt, help="画面/镜头/风格描述")
@@ -818,6 +870,22 @@ def main() -> int:
     _add_common(p2, need_prompt=False)
     p2.add_argument("--image", required=True, help="输入图片（本地路径或 http URL）")
     p2.set_defaults(func=cmd_image2video)
+
+    p_edit = sub.add_parser("videoedit", help="DashScope HappyHorse 视频编辑")
+    p_edit.add_argument("--provider", default="dashscope", choices=("dashscope",),
+                        help="当前仅支持 dashscope")
+    p_edit.add_argument("--model", help="模型名；默认读 DASHSCOPE_VIDEO_EDIT_MODEL")
+    p_edit.add_argument("--video", required=True,
+                        help="待编辑视频的公网 URL 或 oss:// 临时 URL")
+    p_edit.add_argument("--reference-image", action="append", default=[],
+                        help="可选参考图，可重复传入，最多 5 张")
+    p_edit.add_argument("--prompt", required=True, help="视频编辑指令")
+    p_edit.add_argument("--resolution", choices=("720P", "1080P"), default="720P")
+    p_edit.add_argument("--poll-interval", type=int, default=10)
+    p_edit.add_argument("--timeout", type=int, default=900)
+    p_edit.add_argument("-o", "--output", required=True,
+                        help="输出路径；必须位于 outputs/<人类可读主题>/")
+    p_edit.set_defaults(func=cmd_videoedit)
 
     p3 = sub.add_parser("check", help="离线校验 provider 所需 env（不发请求）")
     p3.add_argument("--provider", help=f"provider（{ '/'.join(PROVIDERS) }）")

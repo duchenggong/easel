@@ -54,11 +54,12 @@ def cmd_ping(_args) -> int:
         timeout=10,
     )
 
-    # Step 2: OpenClaw agent
+    # Step 2: OpenClaw agent. Current OpenClaw rejects --local while the
+    # profile gateway is already running, so route the probe through it.
     all_ok &= _step(
-        "Step 2: openclaw agent --local (say PONG)",
+        "Step 2: openclaw agent via gateway (say PONG)",
         ["openclaw", "--profile", "easel",
-         "agent", "--local", "--agent", "main",
+         "agent", "--agent", "main",
          "--timeout", "30", "--message", "say PONG"],
         timeout=60,
         env=_proxy_env(),
