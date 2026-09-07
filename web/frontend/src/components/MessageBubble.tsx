@@ -1,7 +1,52 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type { ChatMessage } from '../lib/store';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconCopy, IconCheck, IconRetry } from './icons';
+
+// ---- 智能体产物路径 → 对话内可直接渲染的媒体 ----
+// 产物可能落在：① Web 内容库 outputs/（→ /api/media）
+//              ② OpenClaw 工作区 outputs/（→ /api/agent-media）
+const MEDIA_RE = /\.(png|jpe?g|gif|webp|bmp|svg|mp4|webm|mov|m4v|mp3|wav|m4a|ogg|flac)$/i;
+const VID_RE = /\.(mp4|webm|mov|m4v)$/i;
+const AUD_RE = /\.(mp3|wav|m4a|ogg|flac)$/i;
+
+function agentMediaUrl(path: string): string | null {
+  const p = path.trim().replace(/^file:\/\//, '');
+  const wsIdx = p.indexOf('/.openclaw-easel/workspace/outputs/');
+  if (wsIdx >= 0) {
+    const rel = p.slice(wsIdx + '/.openclaw-easel/workspace/outputs/'.length);
+    return `/api/agent-media/${rel.split('/').map(encodeURIComponent).join('/')}`;
+  }
+  const outIdx = p.search(/\/outputs\//);
+  if (outIdx >= 0) {
+    const rel = p.slice(outIdx + '/outputs/'.length);
+    return `/api/media/${rel.split('/').map(encodeURIComponent).join('/')}`;
+  }
+  return null;
+}
+
+/** 把消息里的「Attachment: 路径」/「附件：路径」行与本地路径图片引用，转为内嵌媒体。 */
+function embedAgentMedia(text: string): string {
+  // 1) 附件行整行替换为内嵌媒体（避免只显示路径文本）
+  let out = text.replace(
+    /(^|\n)[ \t]*(?:Attachment|附件)\s*[:：][ \t]*(\S+)/gi,
+    (line: string, lead: string, path: string) => {
+      if (!MEDIA_RE.test(path)) return line;
+      const url = agentMediaUrl(path);
+      if (!url) return line;
+      if (VID_RE.test(path)) return `${lead}\n<video src="${url}" controls preload="metadata"></video>\n`;
+      if (AUD_RE.test(path)) return `${lead}\n<audio src="${url}" controls></audio>\n`;
+      return `${lead}\n![生成的图片](${url})\n`;
+    },
+  );
+  // 2) markdown 图片引用了本地绝对路径（file:// 或裸路径）→ 改写为 API URL
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (tag: string, alt: string, src: string) => {
+    if (/^(https?:|data:|\/api\/)/.test(src)) return tag;
+    const url = agentMediaUrl(src);
+    return url ? `![${alt}](${url})` : tag;
+  });
+  return out;
+}
 
 export interface BubbleActions {
   onCopy: () => void;
@@ -39,8 +84,25 @@ function ActionBar({ actions }: { actions: BubbleActions }) {
 export default function MessageBubble({ message, isStreaming, thinking, activity, actions }: MessageBubbleProps) {
   const html = useMemo(() => {
     if (message.role === 'user') return '';
-    return renderMarkdown(message.content);
+    return renderMarkdown(embedAgentMedia(message.content));
   }, [message.content, message.role]);
+
+  // ---- 点击放大（lightbox）----
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!zoomSrc) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoomSrc(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [zoomSrc]);
+  // 内嵌 HTML 里的 <img> 无法直接绑 React 事件，用事件委托拦截点击
+  const onBubbleClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'IMG') {
+      const src = (target as HTMLImageElement).getAttribute('src');
+      if (src) { e.preventDefault(); setZoomSrc(src); }
+    }
+  };
 
   // ---- 用户消息 ----
   if (message.role === 'user') {
@@ -103,11 +165,17 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {livePanel}
-          {message.content && <div dangerouslySetInnerHTML={{ __html: html }} />}
+          {message.content && <div onClick={onBubbleClick} dangerouslySetInnerHTML={{ __html: html }} />}
           {isStreaming && <span className="streaming-cursor" />}
         </div>
         {actions && !isStreaming && <ActionBar actions={actions} />}
       </div>
+      {zoomSrc && (
+        <div className="media-lightbox" onClick={() => setZoomSrc(null)}>
+          <img src={zoomSrc} alt="预览" />
+          <div className="media-lightbox-hint">点击任意处或按 Esc 关闭</div>
+        </div>
+      )}
     </div>
   );
 }

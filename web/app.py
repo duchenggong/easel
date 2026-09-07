@@ -1480,6 +1480,32 @@ async def api_media(path: str):
     return FileResponse(full)
 
 
+# 智能体工作区产物目录（OpenClaw workspace/outputs）：对话内嵌图片/视频的直读根
+AGENT_WORKSPACE_OUTPUTS = Path(os.environ.get(
+    "AGENT_WORKSPACE_OUTPUTS",
+    str(Path.home() / ".openclaw-easel" / "workspace" / "outputs"),
+)).resolve()
+
+
+def _safe_agent_media_path(rel: str) -> Path:
+    '解析智能体工作区 outputs/ 内的媒体文件（防路径穿越）。'
+    full = (AGENT_WORKSPACE_OUTPUTS / rel).resolve()
+    root = AGENT_WORKSPACE_OUTPUTS
+    if root != full and root not in full.parents:
+        raise HTTPException(403, '非法路径')
+    if not full.is_file():
+        raise HTTPException(404, '文件不存在')
+    return full
+
+
+@app.get("/api/agent-media/{path:path}")
+async def api_agent_media(path: str):
+    """直读智能体工作区产物（如 /home/easel/.openclaw-easel/workspace/outputs/xxx.png），
+    供对话消息内嵌展示图片/视频/音频。"""
+    full = _safe_agent_media_path(path)
+    return FileResponse(full)
+
+
 # 系统数据目录/文件——不允许从内容库删除（删了会丢登录态/日历/发布记录）
 PROTECTED_OUTPUTS = {"_login", "_analytics", "_schedule.json", "_ideas.json",
                      "_publish", "_publish.log"}
