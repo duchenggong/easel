@@ -34,6 +34,7 @@ import hmac
 import http.client
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -49,7 +50,7 @@ from model_registry import env_aliases, provider_ids, provider_required_env
 UA = "Easel-ai-video/0.1"
 
 DEFAULT_DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/api/v1"
-DEFAULT_DASHSCOPE_MODEL = "wan2.1-t2v-turbo"
+DEFAULT_DASHSCOPE_MODEL = "wan2.7-t2v"
 DEFAULT_DASHSCOPE_VIDEO_EDIT_MODEL = "happyhorse-1.0-video-edit"
 DEFAULT_ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_ARK_MODEL = "doubao-seedance-1-0-lite-t2v"
@@ -283,7 +284,8 @@ def resolve_model(provider: str, explicit: str | None = None, *, image: bool = F
     if explicit and explicit.strip():
         return explicit.strip()
     env_names = {
-        "dashscope": ("DASHSCOPE_VIDEO_MODEL",),
+        "dashscope": (("DASHSCOPE_I2V_MODEL", "DASHSCOPE_VIDEO_MODEL") if image
+                      else ("DASHSCOPE_T2V_MODEL", "DASHSCOPE_VIDEO_MODEL")),
         "ark": ("ARK_MODEL",),
         "openai-compatible": ("VIDEO_MODEL",),
         "xhs-maas": (("XHS_MAAS_I2V_MODEL",) if image else ("XHS_MAAS_T2V_MODEL",)),
@@ -411,21 +413,55 @@ def _poll(task_url: str, headers: dict[str, str], interval: int, timeout: int,
 
 
 # ── provider: dashscope（通义万相 Wan）─────────────────────
+def _dashscope_video_protocol(model: str) -> str:
+    """wan2.5+（含 wan2.7）与 wan3 走新版统一 video-generation 端点；旧模型走 text2video/image2video。
+
+    可用 env DASHSCOPE_VIDEO_PROTOCOL=v2|legacy 强制指定。
+    """
+    forced = os.environ.get("DASHSCOPE_VIDEO_PROTOCOL", "").strip().lower()
+    if forced in ("v2", "new", "video-generation"):
+        return "v2"
+    if forced in ("legacy", "old", "v1"):
+        return "legacy"
+    m = re.match(r"wan(\d+)\.(\d+)", model.lower())
+    if m and (int(m.group(1)), int(m.group(2))) >= (2, 5):
+        return "v2"
+    return "legacy"
+
+
 def generate_dashscope(args: argparse.Namespace, image: str | None) -> Path:
     api_key = require_env("DASHSCOPE_API_KEY")
     base = (os.environ.get("DASHSCOPE_BASE_URL", "").strip() or DEFAULT_DASHSCOPE_BASE).rstrip("/")
     model = resolve_model("dashscope", args.model, image=image is not None)
-    if image:
-        endpoint = f"{base}/services/aigc/image2video/video-synthesis"
-        input_block = {"img_url": _image_to_data_or_url(image), "prompt": args.prompt or ""}
-    else:
-        endpoint = f"{base}/services/aigc/text2video/video-synthesis"
-        input_block = {"prompt": args.prompt}
     params: dict[str, Any] = {}
-    if args.ratio:
-        params["size"] = args.ratio.replace(":", "*")
-    if args.duration:
-        params["duration"] = args.duration
+    if _dashscope_video_protocol(model) == "v2":
+        # wan2.5+（wan2.7-t2v / wan2.7-i2v 等）：统一 video-generation 端点；
+        # ratio 与 resolution 分开传，分辨率仅支持 720P/1080P；i2v 用 media.first_frame。
+        endpoint = f"{base}/services/aigc/video-generation/video-synthesis"
+        if image:
+            input_block = {"prompt": args.prompt or "",
+                           "media": [{"type": "first_frame",
+                                      "url": _image_to_data_or_url(image)}]}
+        else:
+            input_block = {"prompt": args.prompt}
+        if args.ratio:
+            params["ratio"] = args.ratio
+        params["resolution"] = (os.environ.get("DASHSCOPE_VIDEO_RESOLUTION", "").strip()
+                                or "720P")
+        if args.duration:
+            params["duration"] = args.duration
+    else:
+        # 旧版协议（wan2.1 / wanx2.1 等）：text2video / image2video 端点
+        if image:
+            endpoint = f"{base}/services/aigc/image2video/video-synthesis"
+            input_block = {"img_url": _image_to_data_or_url(image), "prompt": args.prompt or ""}
+        else:
+            endpoint = f"{base}/services/aigc/text2video/video-synthesis"
+            input_block = {"prompt": args.prompt}
+        if args.ratio:
+            params["size"] = args.ratio.replace(":", "*")
+        if args.duration:
+            params["duration"] = args.duration
     payload = {"model": model, "input": input_block, "parameters": params}
     _put_audio(payload, params, args, "dashscope", model)
     headers = {"Authorization": f"Bearer {api_key}", "X-DashScope-Async": "enable"}
