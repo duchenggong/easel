@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Easel — 同步 SKILL + workspace 到 OpenClaw 的 easel 隔离 profile
 #
-# --profile easel 的实际路径：
-#   workspace → ~/.openclaw/workspace-easel/
+# --profile easel 的实际路径（以 openclaw.json 的 agents.defaults.workspace 为准，
+# 脚本会自动读取；2026.9+ 为 ~/.openclaw-easel/workspace/）：
+#   workspace → ~/.openclaw-easel/workspace/
 #   config    → ~/.openclaw-easel/openclaw.json
 #
 # 用法：bash openclaw/sync.sh
@@ -13,8 +14,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PROFILE="easel"
-# --profile easel 的 workspace 在 ~/.openclaw/workspace-easel/
-OPENCLAW_WORKSPACE_DST="$HOME/.openclaw/workspace-${PROFILE}"
+# OpenClaw profile 实际 workspace 以 openclaw.json 的 agents.defaults.workspace 为准
+# （2026.9+ 为 ~/.openclaw-<profile>/workspace；旧约定 ~/.openclaw/workspace-<profile>/ 已废弃）
+OPENCLAW_PROFILE_DIR="$HOME/.openclaw-${PROFILE}"
+OPENCLAW_CONFIG="$OPENCLAW_PROFILE_DIR/openclaw.json"
+OPENCLAW_WORKSPACE_DST="$(python3 - "$OPENCLAW_CONFIG" <<'PY'
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+    ws = (cfg.get("agents", {}).get("defaults", {}) or {}).get("workspace", "")
+    print(ws or "")
+except Exception:
+    print("")
+PY
+)"
+if [ -z "$OPENCLAW_WORKSPACE_DST" ]; then
+    OPENCLAW_WORKSPACE_DST="$OPENCLAW_PROFILE_DIR/workspace"
+    echo "[easel] 警告：未能从 openclaw.json 解析 workspace，回退到 $OPENCLAW_WORKSPACE_DST"
+fi
 OPENCLAW_SKILL_DST="$OPENCLAW_WORKSPACE_DST/skills"
 OPENCLAW_WORKSPACE_SRC="$SCRIPT_DIR/workspace"
 OPENCLAW_SKILL_SRC="$PROJECT_ROOT/skills/openclaw"

@@ -1488,9 +1488,9 @@ AGENT_WORKSPACE_OUTPUTS = Path(os.environ.get(
 
 
 def _safe_agent_media_path(rel: str) -> Path:
-    '解析智能体工作区 outputs/ 内的媒体文件（防路径穿越）。'
+    '解析智能体工作区 outputs/ 内的媒体文件（防路径穿越；outputs 可能是 symlink，逐次解析）。'
+    root = AGENT_WORKSPACE_OUTPUTS.resolve()
     full = (AGENT_WORKSPACE_OUTPUTS / rel).resolve()
-    root = AGENT_WORKSPACE_OUTPUTS
     if root != full and root not in full.parents:
         raise HTTPException(403, '非法路径')
     if not full.is_file():
