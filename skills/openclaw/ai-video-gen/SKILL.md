@@ -33,7 +33,7 @@ python skills/shared/scripts/ai_video.py check --provider dashscope
 
 ## 输入
 
-> **画幅确认硬门**：用户或上游任务未明确横版/竖版（或 16:9/9:16/具体比例）时，任何生成/付费调用前必须追问并等确认；不得从平台、Profile 或脚本默认值静默推断。已明确则不重复问。
+> **画幅确认硬门**：用户或上游任务未明确横版/竖版（或 16:9/9:16/具体比例）时，优先向用户确认；但所在通道无法展示提问（网页对话/自动化，见 AGENTS.md 禁止 ask_user 硬规则）时，默认 16:9 横屏并在交付时说明假设，不得阻塞等待。已明确则不重复问。
 
 - 文生视频：画面/镜头/风格描述（prompt）
 - 图生视频：一张输入图（本地路径或 URL）+ 可选运动描述
@@ -41,7 +41,7 @@ python skills/shared/scripts/ai_video.py check --provider dashscope
 
 ## 输出
 
-生成的视频文件；必须用 `-o` 指定到 `outputs/主题名/`。异步任务自动轮询到完成再下载。
+生成的视频文件；必须用 `-o` 指定到 `outputs/主题名/`。异步任务自动轮询到完成再下载（脚本内部完成全部流程，调用方只需等进程退出）。
 
 ## 执行步骤
 
@@ -70,6 +70,7 @@ python skills/shared/scripts/ai_video.py check --provider dashscope
 
 ## 注意
 
+- **轮询到进程退出为止（硬规则）**：`ai_video.py` 自带提交→轮询→下载→自检全流程和 900 秒超时。若 exec 返回 `Process still running`（后台会话），必须继续 `process poll` 直到进程退出，再读最终输出交付；**严禁在进程仍运行时结束回合**——回合结束后没有任何机制把结果补发给用户，“等它自动完成”意味着用户永远收不到交付消息。一分钟以上的等待是正常现象，耐心 poll 即可。
 - 视频生成 API 均为异步且**耗时较长**（数十秒到数分钟）+ **按量计费**，先与用户确认。
 - 各 provider 的 model 名/字段各版本有差异，均可用 `--model` 或 env 覆盖；如报错对照官方最新文档调整。
 - `--audio auto` 只按 capability profile 映射已知字段；能力声明不等于质量保证，下载后仍须 ffprobe/ASR/视觉审计。网关默认有声但开关字段未知时，不猜测注入参数。

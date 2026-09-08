@@ -108,8 +108,9 @@ python skills/shared/scripts/video_ops.py bgm -i clip.mp4 -o clip_bgm.mp4 \
 ## 规则
 
 1. **先 check 再 generate** — 缺 key 时 check 给出清晰中文提示，不浪费一次失败请求。
-2. **绝不覆盖原始素材** — 只写新文件到 `outputs/主题名/`。
-3. **不重造能力** — 裁剪 / 归一化 / 加视频 BGM 复用 `audio_ops.py` / `video_ops.py`。
-4. **provider 可插拔** — 换服务商只改 `--provider` + env，SKILL 流程不变。
-5. **与 tts-voiceover 分工** — 背景音乐/配乐找 ai-music，人声配音找 tts-voiceover。
+2. **轮询到进程退出为止（硬规则）** — `ai_music.py` 自带提交→轮询→下载全流程和超时控制。若 exec 返回 `Process still running`，必须继续 `process poll` 直到进程退出再读最终输出；**严禁在进程仍运行时结束回合**——回合结束后没有任何机制把结果补发给用户。
+3. **绝不覆盖原始素材** — 只写新文件到 `outputs/主题名/`。
+4. **不重造能力** — 裁剪 / 归一化 / 加视频 BGM 复用 `audio_ops.py` / `video_ops.py`。
+5. **provider 可插拔** — 换服务商只改 `--provider` + env，SKILL 流程不变。
+6. **与 tts-voiceover 分工** — 背景音乐/配乐找 ai-music，人声配音找 tts-voiceover。
    两者可组合：ai-music 出 BGM + tts-voiceover 出旁白 → `video_ops.py bgm` 混音。
