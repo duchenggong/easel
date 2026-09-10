@@ -67,7 +67,8 @@ if command -v openclaw &>/dev/null; then
     ok "OpenClaw $(openclaw --version 2>&1 | head -1)"
 else
     info "安装 OpenClaw..."
-    npm install -g openclaw@latest --loglevel warn 2>&1 | tail -1
+    # 锁定版本：本仓库的兼容性修复与技能规则针对 2026.9.1 验证；升级前需回归测试
+    npm install -g openclaw@2026.9.1 --loglevel warn 2>&1 | tail -1
     ok "OpenClaw $(openclaw --version 2>&1 | head -1)"
 fi
 
@@ -233,6 +234,17 @@ fi
 # 请求首 token 可能较慢，不设会用默认较短值 → 报「model did not produce a response before the model
 # idle timeout」而中断整个 run。与 agents.defaults.timeoutSeconds 是两回事，provider 超时不能延长整个 run。
 $OC config set models.providers.anthropic.timeoutSeconds 600 2>&1 | tail -1
+
+# ---- 10.5 公司 AI 网关 Provider（COMPANY_AI_* 已配置时自动注册） ----
+# setup.sh 原生只认 Anthropic/EASEL_LLM/OPENAI_MAAS；公司网关是自定义
+# Provider，必须走注册脚本写入（幂等，重复执行只覆盖同一块）。
+if [ -n "${COMPANY_AI_BASE_URL:-}" ] && [ -n "${COMPANY_AI_API_KEY:-}" ] && [ -n "${COMPANY_AI_MODEL:-}" ]; then
+    info "注册公司 AI 网关 Provider (company-ai)..."
+    python3 "$PROJECT_ROOT/openclaw/register-company-ai.py" \
+        --env-file "$PROJECT_ROOT/.env" --profile "$PROFILE" || warn "company-ai 注册失败，检查 .env 配置"
+else
+    warn "未配置 COMPANY_AI_* — 公司网关主模型未注册（主模型取决于 CLAUDE_MODEL/ANTHROPIC 配置）"
+fi
 $OC config set gateway.mode local 2>&1 | tail -1
 $OC config set gateway.bind loopback 2>&1 | tail -1
 
